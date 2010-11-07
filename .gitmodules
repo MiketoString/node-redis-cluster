@@ -1,0 +1,6 @@
+[submodule "external/redis-node-client"]
+	path = external/redis-node-client
+	url = git://github.com/fictorial/redis-node-client.git
+[submodule "external/hashlib"]
+	path = external/hashlib
+	url = git://github.com/brainfucker/hashlib.git
