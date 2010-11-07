@@ -1,0 +1,162 @@
+#!/usr/bin/env node
+
+var path = require('path')
+var config = require( path.join(__dirname,'..','lib','config') )
+
+var sys = require('sys')
+var net = require('net')
+var EventEmitter = require('events').EventEmitter
+
+var ConfigClient = require('config-node-client').ConfigNodeClient
+var ReplyParser = require('redis-client').ReplyParser
+var RedisClient = require('redis-client').Client
+
+//redis docs suggest using sha, but md5 is faster.  hash algorithm can be switched easily here though
+var hashfunc = require('hashlib').md5
+
+
+var CONFIG_HOST = 'localhost'
+var CONIFIG_PORT = 8000
+
+var PROXY_PORT = 8001
+
+var HASHING_SLOTS = 4096
+var bitsf = Math.log(HASHING_SLOTS)/Math.log(16)
+if( Math.ceil(bitsf) != bitsf ) {
+	sys.puts( '# of hashing slots must be of the form 16^n where n is an integer')
+	process.exit(-1)
+}
+var HASH_BITS = bitsf
+
+
+var configSvr = new ConfigClient( 'localhost', 8000 )
+configSvr.getDataNodes( function(err, nodes) {
+	if( err ) {
+		sys.puts( 'ERROR - unable to lookup data nodes from config server, error was: ' + err )
+		process.exit(-1)
+	}
+
+	initialize()
+})
+
+
+var proxyServer = null
+var proxyServerStart = 0
+var proxyServerStats = {
+	'uptime': 0,
+	'activeClients': 0,
+	'totalClients': 0,
+	'totalCommands': 0
+}
+
+function outputStats() {
+	var uptime = ((new Date().getTime()) - proxyServerStart)/1000
+
+	sys.puts( '------------------------------' )
+	sys.puts( 'uptime: ' + uptime + ' seconds' )
+	sys.puts( 'activeClients: ' + proxyServerStats.activeClients )
+	sys.puts( 'totalClients: ' + proxyServerStats.totalClients )
+	sys.puts( 'totalCommands: ' + proxyServerStats.totalCommands )
+	sys.puts( '------------------------------' )
+}
+setInterval(outputStats, 5000)
+
+
+function initialize() {
+	//create our proxy server
+	proxyServer = net.createServer(function (stream) {
+		var client = new ProxyClient( stream )
+
+		//handle whenever the client sends a complete command
+		client.on('command', function( cmd ) {
+			var commandName = cmd['command']
+			var key = cmd['key']
+			var arguments = cmd['arguments']
+
+			//get hash of key
+			var keyhash = hashfunc(key)
+
+			//get last HASH_BITS of the hash, this bounds the value between [0,HASHING_SLOTS]
+			var bits = keyhash.substring( keyhash.length - (HASH_BITS+1), keyhash.length-1 )
+
+			//convert to a base 10 integer for slot number
+			var slot = parseInt( bits, 16 )
+
+			//sys.puts( 'KEY ' + key + ' --> ' + keyhash + ' --> ' + bits + ' --> slot: ' + slot )
+			sys.puts( 'SENDING COMMAND ' + commandName + ' on key ' + key + ' args: ' + sys.inspect(arguments) + ' to slot ' + slot )
+		})
+	})
+
+	//listen on PROXY_PORT
+	proxyServer.listen( PROXY_PORT, 'localhost' )
+	sys.puts( 'Redis clustering proxy listening on port ' + PROXY_PORT + '...' )
+
+	//track time that the server launched
+	proxyServerStart = new Date().getTime()
+}
+
+var CommandParser = function( callback, thisArg ) {
+	ReplyParser.call( this, callback, thisArg )
+}
+sys.inherits( CommandParser, ReplyParser)
+
+var ProxyClient = function( stream ) {
+	EventEmitter.call(this)
+	var self = this
+
+	self.stream = stream
+	self.id = ProxyClient.nextId++
+
+	this.toString = function() {
+		return "[reids-proxy-client #"+self.id+"]"
+	}
+
+	this.onCommand = function( cmd ) {
+		if( cmd.type != 'MULTIBULK' ) {
+			throw new Error( 'Unable to handle non multibulk command...' )
+			return
+		}
+
+		//track stat for number of commands handled
+		proxyServerStats.totalCommands++
+
+		//read all arguments for this command
+		var args = []
+		for( var vi in cmd.value ) { args.push( cmd.value[vi].value.toString() ) }
+
+		//should be formatted as command key <args>
+		var commandName = args.shift()
+		var key = args.shift()
+
+		//dispatch that this client is trying to send a command
+		self.emit( 'command', {
+			'command': commandName,
+			'key': key,
+			'arguments': args
+		})
+	}
+	self.parser = new CommandParser( self.onCommand, self )
+
+	self.stream.on('connect', function () {
+		//client connected
+		proxyServerStats.totalClients++
+		proxyServerStats.activeClients++
+
+		sys.puts( self + ' -- connected' )
+	})
+
+	stream.on('data', function (data) {
+		sys.puts( self + ' -- got data: ' + data )
+		self.parser.feed( data )
+		//stream.write(data)
+	})
+
+	stream.on('end', function () {
+		sys.puts( self + ' -- goodbye!' )
+		proxyServerStats.activeClients--
+
+		stream.end()
+	})
+}
+ProxyClient.nextId = 1
+sys.inherits( ProxyClient, EventEmitter )
