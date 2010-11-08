@@ -23,6 +23,7 @@ pushd /usr/local/redis
 make
 popd
 
+mkdir -p /mnt/nrc/redis
 
 echo "Symlinkling redis $VERSION binaries to /usr/local/bin/"
 ln -s /usr/local/redis/redis-server /usr/local/bin/redis-server
