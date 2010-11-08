@@ -29,14 +29,25 @@ if( Math.ceil(bitsf) != bitsf ) {
 var HASH_BITS = bitsf
 
 
+//query config server for full list of data nodes and establish connections to each
+//prior to accepting connections
 var configSvr = new ConfigClient( 'localhost', 8000 )
-configSvr.getDataNodes( function(err, nodes) {
+
+configSvr.getDataNodeInfo( function(err, dataNodeInfos) {
+	//if there was an error listing data nodes
 	if( err ) {
 		sys.puts( 'ERROR - unable to lookup data nodes from config server, error was: ' + err )
 		process.exit(-1)
 	}
 
-	initialize()
+    for( var id in dataNodeInfos ) {
+        var info = dataNodeInfo[id]
+        sys.puts( 'connecting to data node ' + id + ', ' + info.host + ':' + info.port )
+        
+    }
+
+    //start accepting connections
+	startServer()
 })
 
 
