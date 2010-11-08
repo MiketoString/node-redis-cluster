@@ -21,7 +21,7 @@ namespace :redis do
 		out = ENV['out']
 
 		run "cp #{deploy_to}/current/cap/conf/#{template} #{out}"
-		run "sed -i s/REDISPORT/#{port}/g #{out}"
+		run "sed -i -e 's/REDISPORT/#{port}/g' #{out}"
 	end
 
 	task :start do
