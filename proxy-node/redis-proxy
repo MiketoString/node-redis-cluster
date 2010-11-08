@@ -21,17 +21,18 @@ var CONIFIG_PORT = 8000
 var PROXY_PORT = 8001
 
 var HASHING_SLOTS = 4096
-var bitsf = Math.log(HASHING_SLOTS)/Math.log(16)
-if( Math.ceil(bitsf) != bitsf ) {
+var bytesf = Math.log(HASHING_SLOTS)/Math.log(16)
+if( Math.ceil(bytesf) != bytesf ) {
 	sys.puts( '# of hashing slots must be of the form 16^n where n is an integer')
 	process.exit(-1)
 }
-var HASH_BITS = bitsf
+var HASH_BYTES = bytesf
 
 
 //query config server for full list of data nodes and establish connections to each
 //prior to accepting connections
 var configSvr = new ConfigClient( 'localhost', 8000 )
+var dataNodePool = new DataNodeClientPool()
 
 configSvr.getDataNodeInfo( function(err, dataNodeInfos) {
 	//if there was an error listing data nodes
@@ -43,11 +44,11 @@ configSvr.getDataNodeInfo( function(err, dataNodeInfos) {
     for( var id in dataNodeInfos ) {
         var info = dataNodeInfo[id]
         sys.puts( 'connecting to data node ' + id + ', ' + info.host + ':' + info.port )
-        
+        dataNodePool.loadServer( id, info.host, info.port, info.range )
     }
 
-    //start accepting connections
-	startServer()
+	//start accepting connections after all clients are connected
+	dataNodePool.connectAll( startServer )
 })
 
 
@@ -87,8 +88,8 @@ function initialize() {
 			//get hash of key
 			var keyhash = hashfunc(key)
 
-			//get last HASH_BITS of the hash, this bounds the value between [0,HASHING_SLOTS]
-			var bits = keyhash.substring( keyhash.length - (HASH_BITS+1), keyhash.length-1 )
+			//get last HASH_BYTES of the hash, this bounds the value between [0,HASHING_SLOTS]
+			var bits = keyhash.substring( keyhash.length - (HASH_BYTES+1), keyhash.length-1 )
 
 			//convert to a base 10 integer for slot number
 			var slot = parseInt( bits, 16 )
